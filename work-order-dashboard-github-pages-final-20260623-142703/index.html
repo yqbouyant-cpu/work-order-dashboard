@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>工单五模块管理看板</title>
+  <link rel="icon" href="data:," />
+  <link rel="stylesheet" href="./src/styles.css" />
+</head>
+<body>
+  <header class="app-header">
+    <div>
+      <p class="eyebrow">工单风险与闭环管理</p>
+      <h1 id="pageTitle">单日总汇总表</h1>
+      <p class="header-note">
+        数据日期：<span id="dataDate">读取中</span>｜数据范围：仅排除单据状态为“已结束”的工单，其余工单按当前单据状态和工单状态展示｜人员按制单人/创建人划分｜高风险：超10天；中风险：超6天；低风险：4天内
+      </p>
+    </div>
+    <div class="header-actions">
+      <button class="button button-ghost" id="resetFilters" type="button">重置筛选</button>
+      <button class="button" id="exportNotes" type="button">导出维护字段</button>
+    </div>
+  </header>
+
+  <nav class="business-tabs" aria-label="工单模块切换">
+    <button class="tab-button is-active" type="button" data-tab="summary">单日总汇总表</button>
+    <button class="tab-button" type="button" data-tab="quality">质量工单</button>
+    <button class="tab-button" type="button" data-tab="supply">供应工单</button>
+    <button class="tab-button" type="button" data-tab="market">市场工单</button>
+    <button class="tab-button" type="button" data-tab="support">支持工单</button>
+    <button class="tab-button" type="button" data-tab="project">项目专项跟进</button>
+    <button class="tab-button" type="button" data-tab="import">数据导入/刷新</button>
+  </nav>
+
+  <main class="page-shell">
+    <section id="loadState" class="load-state">正在读取 CSV 数据...</section>
+
+    <section class="toolbar-panel" aria-label="当前模块筛选">
+      <div>
+        <p class="section-kicker" id="moduleKicker">总览</p>
+        <h2 id="moduleTitle">单日总汇总表</h2>
+        <p id="moduleHint" class="module-hint">汇总质量、供应、市场、支持四类工单。</p>
+        <p id="storageStatus" class="storage-status"></p>
+      </div>
+      <div class="toolbar-controls">
+        <label>
+          <span>人员筛选</span>
+          <select id="ownerFilter">
+            <option value="">全部人员</option>
+          </select>
+        </label>
+        <label>
+          <span>填写人</span>
+          <input id="editorName" type="text" placeholder="你的姓名" />
+        </label>
+        <label class="search-field">
+          <span>搜索</span>
+          <input id="searchInput" type="search" placeholder="工单号 / 客户 / 卡点 / 进展" />
+        </label>
+        <button class="button button-ghost" id="refreshSharedData" type="button">刷新协作数据</button>
+      </div>
+    </section>
+
+    <section id="tabContent" aria-live="polite"></section>
+  </main>
+
+  <div id="drawerBackdrop" class="drawer-backdrop" hidden></div>
+  <aside id="detailDrawer" class="detail-drawer" hidden aria-label="下探明细">
+    <div class="drawer-head">
+      <div>
+        <p class="section-kicker" id="drawerKicker">下探明细</p>
+        <h2 id="drawerTitle">工单明细</h2>
+      </div>
+      <button class="icon-button" id="closeDrawer" type="button" aria-label="关闭明细">×</button>
+    </div>
+    <div id="drawerBody" class="drawer-body"></div>
+  </aside>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+  <script src="./src/config.js"></script>
+  <script src="./data/embedded-data.js"></script>
+  <script src="./src/import-parser.js"></script>
+  <script src="./src/storage.js"></script>
+  <script src="./src/app.js" defer></script>
+</body>
+</html>
