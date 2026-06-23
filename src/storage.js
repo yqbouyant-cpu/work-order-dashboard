@@ -2,6 +2,7 @@
   const TICKET_STORE = "workorder-dashboard-ticket-notes-v1";
   const PROJECT_STORE = "workorder-dashboard-project-notes-v1";
   const EDITOR_STORE = "workorder-dashboard-editor-name";
+  const TICKET_TYPES = ["质量工单", "支持工单", "市场工单", "供应工单"];
 
   const TABLES = {
     baseTickets: "base_tickets",
@@ -133,6 +134,7 @@
           records: activeTickets.map(ticketToDashboardRow),
           totalBaseTickets: allTickets.length,
           activeBaseTickets: activeTickets.length,
+          ticketTypes: uniqueTicketTypes(allTickets),
         };
       } catch (error) {
         console.warn("Supabase tickets load failed, falling back to local data.", error);
@@ -151,6 +153,7 @@
           records: activeTickets.map(ticketToDashboardRow),
           totalBaseTickets: allTickets.length,
           activeBaseTickets: activeTickets.length,
+          ticketTypes: uniqueTicketTypes(allTickets),
         };
       } catch (error) {
         console.warn("Supabase REST tickets load failed.", error);
@@ -164,6 +167,7 @@
         records: payload.records || [],
         totalBaseTickets: Number(payload.totalBaseTickets || 0),
         activeBaseTickets: Number(payload.activeBaseTickets || 0),
+        ticketTypes: payload.ticketTypes || [],
       };
     } catch (error) {
       return { mode: "local", error, records: null, totalBaseTickets: 0, activeBaseTickets: 0 };
@@ -187,10 +191,14 @@
     const importedAt = new Date().toISOString();
     const rows = await parseImportFile(file);
     const currentTickets = await loadAllBaseTickets(client);
-    const currentByKey = new Map(currentTickets.map((ticket) => [ticket.ticketKey, ticket]));
+    const currentByKey = new Map(
+      currentTickets
+        .filter((ticket) => clean(ticket.ticketType) === clean(ticketType))
+        .map((ticket) => [ticket.ticketKey, ticket]),
+    );
     const manual = await loadManualFields();
     const manualKeys = new Set((manual.records || []).map((record) => record.ticketKey).filter(Boolean));
-    const normalized = rows
+    const normalized = filterRowsForTicketType(rows, ticketType)
       .map((row) => normalizeImportedTicket(row, { ticketType, importedBy, fileName: file.name, importedAt }))
       .filter(Boolean);
     const byKey = new Map();
@@ -234,10 +242,14 @@
     const importedAt = new Date().toISOString();
     const rows = await parseImportFile(file);
     const currentTickets = await loadAllBaseTicketsRest();
-    const currentByKey = new Map(currentTickets.map((ticket) => [ticket.ticketKey, ticket]));
+    const currentByKey = new Map(
+      currentTickets
+        .filter((ticket) => clean(ticket.ticketType) === clean(ticketType))
+        .map((ticket) => [ticket.ticketKey, ticket]),
+    );
     const manual = await loadManualFields();
     const manualKeys = new Set((manual.records || []).map((record) => record.ticketKey).filter(Boolean));
-    const normalized = rows
+    const normalized = filterRowsForTicketType(rows, ticketType)
       .map((row) => normalizeImportedTicket(row, { ticketType, importedBy, fileName: file.name, importedAt }))
       .filter(Boolean);
     const byKey = new Map();
@@ -366,13 +378,14 @@
   async function saveManualField({ ticketKey, ticketType, ticketNo, fieldName, value, updatedBy }) {
     const apiField = TICKET_FIELD_TO_API[fieldName];
     if (!apiField) throw new Error(`不支持的字段：${fieldName}`);
+    const normalizedValue = normalizeManualValue(apiField, value);
     const base = {
       ticketKey,
       ticketType,
       ticketNo,
       updatedBy: clean(updatedBy) || "未署名",
       updatedAt: new Date().toISOString(),
-      [apiField]: value,
+      [apiField]: normalizedValue,
     };
 
     const client = supabaseClient();
@@ -628,7 +641,9 @@
   function normalizeTicketRecord(record = {}) {
     const fields = {};
     Object.entries(TICKET_FIELD_TO_API).forEach(([uiField, apiField]) => {
-      if (record[apiField] !== undefined && record[apiField] !== null) fields[uiField] = record[apiField];
+      if (record[apiField] !== undefined && record[apiField] !== null) {
+        fields[uiField] = apiField === "hasBlocker" ? booleanToManualText(record[apiField]) : record[apiField];
+      }
     });
     if (record.updatedAt) fields["更新时间"] = formatDateTime(record.updatedAt);
     if (record.updatedBy) fields["更新人"] = record.updatedBy;
@@ -640,6 +655,10 @@
       updatedBy: clean(record.updatedBy),
       updatedAt: clean(record.updatedAt),
     };
+  }
+
+  function uniqueTicketTypes(rows) {
+    return [...new Set((rows || []).map((row) => clean(row.ticketType)).filter(Boolean))];
   }
 
   function normalizeProjectRecord(record = {}) {
@@ -896,6 +915,45 @@
       if (value) return value;
     }
     return "";
+  }
+
+  function filterRowsForTicketType(rows, selectedType) {
+    const target = normalizeTicketTypeName(selectedType);
+    return (rows || []).filter((row) => {
+      const detected = normalizeTicketTypeName(extractImportedTicketType(row));
+      return !detected || detected === target;
+    });
+  }
+
+  function extractImportedTicketType(row = {}) {
+    return firstClean(row, ["工单类型", "类型", "业务类型", "单据类型", "客诉类型", "来源类型"]);
+  }
+
+  function normalizeTicketTypeName(value) {
+    const text = clean(value);
+    if (!text) return "";
+    if (TICKET_TYPES.includes(text)) return text;
+    if (text.includes("质量")) return "质量工单";
+    if (text.includes("支持")) return "支持工单";
+    if (text.includes("市场")) return "市场工单";
+    if (text.includes("供应")) return "供应工单";
+    return "";
+  }
+
+  function normalizeManualValue(apiField, value) {
+    if (apiField === "hasBlocker") return textToBoolean(value);
+    return value;
+  }
+
+  function textToBoolean(value) {
+    if (value === true) return true;
+    if (value === false || value === null || value === undefined) return false;
+    const text = clean(value).toLowerCase();
+    return ["true", "t", "1", "yes", "y", "是", "有", "有卡点"].includes(text);
+  }
+
+  function booleanToManualText(value) {
+    return textToBoolean(value) ? "是" : "";
   }
 
   function parseAgeDays(value, createTime, importedAt) {

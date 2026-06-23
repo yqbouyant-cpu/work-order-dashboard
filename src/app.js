@@ -133,7 +133,10 @@
 
       const detailRow = event.target.closest("[data-ticket-detail]");
       if (detailRow && !event.target.closest("textarea,input,select,button")) {
-        const row = state.tickets.find((item) => item["工单号"] === detailRow.dataset.ticketDetail);
+        const row = state.tickets.find((item) => (
+          item["工单号"] === detailRow.dataset.ticketDetail
+          && (!detailRow.dataset.ticketType || item["工单类型"] === detailRow.dataset.ticketType)
+        ));
         if (row) openDetailDrawer([row], `工单 ${row["工单号"]}`);
         return;
       }
@@ -211,7 +214,7 @@
       if (!record) return;
       const fields = record.fields || {};
       if (record.ticketKey) state.manualFieldsByKey.set(record.ticketKey, fields);
-      if (record.ticketNo) state.manualFieldsByNo.set(record.ticketNo, fields);
+      if (record.ticketNo && !record.ticketType) state.manualFieldsByNo.set(record.ticketNo, fields);
     });
   }
 
@@ -264,8 +267,17 @@
 
   async function loadBaseTickets() {
     const response = await storage().loadTickets();
-    if (response.records && (response.records.length || response.totalBaseTickets > 0)) return response.records;
-    return loadRows(TICKET_CSV, "tickets");
+    const embeddedRows = await loadRows(TICKET_CSV, "tickets");
+    if (response.records && (response.records.length || response.totalBaseTickets > 0)) {
+      return mergeSharedTicketsWithEmbedded(response.records, embeddedRows, response.ticketTypes || []);
+    }
+    return embeddedRows;
+  }
+
+  function mergeSharedTicketsWithEmbedded(sharedRows, embeddedRows, sharedTypes = []) {
+    const types = new Set((sharedTypes.length ? sharedTypes : sharedRows.map((row) => row["工单类型"])).filter(Boolean));
+    const keptEmbeddedRows = embeddedRows.filter((row) => !types.has(row["工单类型"]));
+    return [...sharedRows, ...keptEmbeddedRows];
   }
 
   async function loadImportLogs() {
@@ -548,6 +560,7 @@
         </div>
         ${renderTopLongCycleTable(rows)}
       </section>
+      ${renderBlockedSection(rows)}
       ${renderDetailBoard(rows)}
     `;
   }
@@ -596,6 +609,7 @@
         </div>
         ${renderHighRiskEditableList(rows)}
       </section>
+      ${renderBlockedSection(rows)}
       ${renderDetailBoard(rows)}
     `;
   }
@@ -803,7 +817,7 @@
           </thead>
           <tbody>
             ${rows.map((row) => `
-              <tr data-ticket-detail="${escAttr(row["工单号"])}">
+              <tr data-ticket-detail="${escAttr(row["工单号"])}" data-ticket-type="${escAttr(row["工单类型"])}">
                 <td>${esc(row["工单类型"])}</td>
                 <td><b>${esc(row["工单号/客诉单号"])}</b></td>
                 <td>${esc(row["制单人/创建人"])}</td>
@@ -833,22 +847,26 @@
           <thead>
             <tr>
               <th>客诉单号</th>
+              <th>制单人</th>
               <th>制单时间</th>
               <th>问题简述</th>
+              <th>是否有卡点</th>
               <th>风险原因</th>
               <th>备注</th>
             </tr>
           </thead>
           <tbody>
             ${rows.length ? rows.map((row) => `
-              <tr data-ticket-detail="${escAttr(row["工单号"])}">
+              <tr class="${isBlockerTracked(row) ? "has-blocker-row" : ""}" data-ticket-detail="${escAttr(row["工单号"])}" data-ticket-type="${escAttr(row["工单类型"])}">
                 <td><b>${esc(row["工单号/客诉单号"])}</b></td>
+                <td>${esc(ticketCreator(row) || "-")}</td>
                 <td>${esc(row["制单时间"])}</td>
                 <td>${clip(row["问题简述"])}</td>
+                <td>${ticketBlockCheckbox(row)}</td>
                 <td>${ticketTextarea(row, "风险原因")}</td>
                 <td>${ticketTextarea(row, "备注")}<span class="save-status" data-save-status data-ticket-id="${escAttr(row["工单号"])}"></span></td>
               </tr>
-            `).join("") : `<tr><td colspan="5" class="muted">当前筛选下没有高风险工单。</td></tr>`}
+            `).join("") : `<tr><td colspan="7" class="muted">当前筛选下没有高风险工单。</td></tr>`}
           </tbody>
         </table>
       </div>
@@ -907,7 +925,7 @@
           </thead>
           <tbody>
             ${rows.map((row) => `
-              <tr data-ticket-detail="${escAttr(row["工单号"])}">
+              <tr data-ticket-detail="${escAttr(row["工单号"])}" data-ticket-type="${escAttr(row["工单类型"])}">
                 <td>${riskBadge(row["风险等级"])}</td>
                 <td>${esc(row["制单人/创建人"] || "-")}</td>
                 <td><b>${esc(row["工单号/客诉单号"])}</b></td>
@@ -989,34 +1007,57 @@
     });
   }
 
+  function renderBlockedSection(rows) {
+    const blocked = blockedTicketRows(rows);
+    return `
+      <section class="panel blocker-panel">
+        <div class="panel-heading">
+          <div>
+            <p class="section-kicker">卡点</p>
+            <h2>卡点工单清单</h2>
+            <p class="board-note">来源于人工勾选“有卡点”或已填写当前卡点的工单，人工字段会保存到 Supabase。</p>
+          </div>
+          <span class="panel-count">${blocked.length} 单</span>
+        </div>
+        ${renderBlockedTable(blocked)}
+      </section>
+    `;
+  }
+
   function renderBlockedTable(rows) {
-    if (!rows.length) return emptyState("当前筛选下没有有卡点工单。");
+    if (!rows.length) return emptyState("当前筛选下没有卡点工单。");
     return `
       <div class="table-wrap">
         <table class="blocked-table">
           <thead>
             <tr>
-              <th>工单号</th>
-              <th>制单人/创建人</th>
+              <th>工单类型</th>
+              <th>客诉单号</th>
+              <th>制单人</th>
+              <th>制单时间</th>
               <th>已流转天数</th>
-              <th>风险</th>
-              <th>单据状态</th>
+              <th>问题简述</th>
               <th>当前卡点</th>
               <th>下一步规划</th>
+              <th>预计闭环时间</th>
               <th>最新进展</th>
+              <th>备注</th>
             </tr>
           </thead>
           <tbody>
             ${rows.map((row) => `
-              <tr>
-                <td><b>${esc(row["工单号"])}</b></td>
-                <td>${esc(row["制单人/创建人"])}</td>
-                <td>${esc(row["已流转天数"])} 天</td>
-                <td>${riskBadge(row["风险等级"])}</td>
-                <td>${esc(row["单据状态"] || "-")}</td>
-                <td>${clip(row["当前卡点"])}</td>
-                <td>${clip(row["下一步规划"])}</td>
-                <td>${clip(row["最新进展"])}</td>
+              <tr class="${isBlockerFlagged(row) ? "has-blocker-row" : ""}" data-ticket-detail="${escAttr(row["工单号"])}" data-ticket-type="${escAttr(row["工单类型"])}">
+                <td>${esc(row["工单类型"])}</td>
+                <td><b>${esc(row["工单号/客诉单号"])}</b></td>
+                <td>${esc(ticketCreator(row) || "-")}</td>
+                <td>${esc(row["制单时间"] || "-")}</td>
+                <td>${esc(row["已流转天数"] || "0")} 天</td>
+                <td>${clip(row["问题简述"])}</td>
+                <td>${ticketTextarea(row, "当前卡点")}</td>
+                <td>${ticketTextarea(row, "下一步规划")}</td>
+                <td>${ticketDateEditor(row, "预计闭环时间")}</td>
+                <td>${ticketTextarea(row, "最新进展")}</td>
+                <td>${ticketTextarea(row, "备注")}<span class="save-status" data-save-status data-ticket-id="${escAttr(row["工单号"])}"></span></td>
               </tr>
             `).join("")}
           </tbody>
@@ -1386,19 +1427,19 @@
   }
 
   function ticketTextarea(row, field) {
-    return `<textarea data-ticket-id="${escAttr(row["工单号"])}" data-ticket-field="${escAttr(field)}" placeholder="${escAttr(field)}">${esc(row[field] || "")}</textarea>`;
+    return `<textarea data-ticket-id="${escAttr(row["工单号"])}" data-ticket-type="${escAttr(row["工单类型"])}" data-ticket-field="${escAttr(field)}" placeholder="${escAttr(field)}">${esc(row[field] || "")}</textarea>`;
   }
 
   function ticketDateEditor(row, field) {
-    return `<input type="date" data-ticket-id="${escAttr(row["工单号"])}" data-ticket-field="${escAttr(field)}" value="${escAttr(dateOnly(row[field]))}" />`;
+    return `<input type="date" data-ticket-id="${escAttr(row["工单号"])}" data-ticket-type="${escAttr(row["工单类型"])}" data-ticket-field="${escAttr(field)}" value="${escAttr(dateOnly(row[field]))}" />`;
   }
 
   function ticketBlockCheckbox(row) {
-    const checked = clean(row["有卡点"]) === "是" ? "checked" : "";
+    const checked = isBlockerFlagged(row) ? "checked" : "";
     return `
       <label class="check-cell">
-        <input type="checkbox" data-ticket-id="${escAttr(row["工单号"])}" data-ticket-field="有卡点" value="是" ${checked} />
-        <span>有</span>
+        <input type="checkbox" data-ticket-id="${escAttr(row["工单号"])}" data-ticket-type="${escAttr(row["工单类型"])}" data-ticket-field="有卡点" value="是" ${checked} />
+        <span>${checked ? "有卡点" : "无卡点"}</span>
       </label>
     `;
   }
@@ -1431,16 +1472,17 @@
 
   function scheduleTicketSave(target, delay = 260) {
     const id = target.dataset.ticketId;
+    const ticketType = target.dataset.ticketType;
     const field = target.dataset.ticketField;
     const value = target.type === "checkbox" ? (target.checked ? "是" : "") : target.value;
-    const key = `ticket:${id}:${field}`;
+    const key = `ticket:${ticketType || ""}:${id}:${field}`;
     clearTimeout(state.saveTimers.get(key));
-    state.saveTimers.set(key, setTimeout(() => saveTicketField(id, field, value), delay));
+    state.saveTimers.set(key, setTimeout(() => saveTicketField(id, field, value, ticketType), delay));
   }
 
-  function saveTicketField(id, field, value) {
+  function saveTicketField(id, field, value, ticketType = "") {
     if (!TICKET_EDIT_FIELDS.includes(field)) return;
-    const row = state.tickets.find((item) => item["工单号"] === id);
+    const row = state.tickets.find((item) => item["工单号"] === id && (!ticketType || item["工单类型"] === ticketType));
     if (!row) return;
     row[field] = value;
     row["更新时间"] = formatDateTime(new Date());
@@ -1461,7 +1503,8 @@
       const fields = result.record?.fields || {};
       Object.assign(row, fields);
       showSaved("ticket", id, row["更新时间"], result.mode);
-      renderToolbar();
+      if (field === "有卡点") renderTabContent();
+      else renderToolbar();
     }).catch((error) => {
       console.error("Ticket field save failed.", error);
       showSaveFailed("ticket", id, error);
@@ -1728,8 +1771,27 @@
   }
 
   function hasBlocked(row) {
-    if (clean(row["有卡点"]) === "是") return true;
+    if (isBlockerFlagged(row)) return true;
     return BLOCK_FIELDS.some((field) => clean(row[field]) !== "");
+  }
+
+  function isBlockerFlagged(row) {
+    const value = clean(row["有卡点"]).toLowerCase();
+    return ["是", "有", "有卡点", "true", "1", "yes"].includes(value);
+  }
+
+  function isBlockerTracked(row) {
+    return isBlockerFlagged(row) || clean(row["当前卡点"]) !== "";
+  }
+
+  function blockedTicketRows(records) {
+    return records
+      .filter(isBlockerTracked)
+      .sort((a, b) => Number(b["已流转天数"] || 0) - Number(a["已流转天数"] || 0));
+  }
+
+  function ticketCreator(row) {
+    return clean(row["制单人/创建人"] || row["制单人"] || row["创建人"] || row.creator || row["处理人员"]);
   }
 
   function riskBadge(risk) {

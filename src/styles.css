@@ -393,11 +393,38 @@ table {
 
 .top-table,
 .blocked-table {
-  min-width: 1180px;
+  min-width: 1540px;
 }
 
 .high-risk-table {
-  min-width: 980px;
+  min-width: 1260px;
+}
+
+.blocked-table textarea {
+  min-width: 190px;
+}
+
+.has-blocker-row {
+  background: #fff7ed;
+}
+
+.has-blocker-row:hover {
+  background: #ffedd5;
+}
+
+.blocker-panel .panel-heading {
+  align-items: flex-start;
+}
+
+.panel-count {
+  flex: 0 0 auto;
+  border: 1px solid #bfdbfe;
+  border-radius: 999px;
+  padding: 6px 10px;
+  background: #eff6ff;
+  color: var(--blue);
+  font-size: 12px;
+  font-weight: 800;
 }
 
 .detail-table {

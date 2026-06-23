@@ -17,6 +17,7 @@ const ALLOWED_ORIGINS = cleanEnv(process.env.ALLOWED_ORIGINS)
   .split(",")
   .map((item) => item.trim())
   .filter(Boolean);
+const TICKET_TYPES = ["质量工单", "支持工单", "市场工单", "供应工单"];
 
 const MIME_TYPES = {
   ".html": "text/html; charset=utf-8",
@@ -246,6 +247,7 @@ async function getTicketsPayload() {
     records: activeTickets.map(ticketToDashboardRow),
     totalBaseTickets: tickets.length,
     activeBaseTickets: activeTickets.length,
+    ticketTypes: uniqueTicketTypes(tickets),
   };
 }
 
@@ -316,10 +318,14 @@ async function importTickets(body) {
     const fileBuffer = decodeBase64File(body.fileBase64);
     const rows = parseImportRows(fileName, fileBuffer);
     const currentTickets = await listAllBaseTickets();
-    const currentByKey = new Map(currentTickets.map((ticket) => [ticket.ticketKey, ticket]));
+    const currentByKey = new Map(
+      currentTickets
+        .filter((ticket) => clean(ticket.ticketType) === clean(ticketType))
+        .map((ticket) => [ticket.ticketKey, ticket]),
+    );
     const manualKeys = new Set((await listManualFields()).map((record) => record.ticketKey).filter(Boolean));
 
-    const normalized = rows
+    const normalized = filterRowsForTicketType(rows, ticketType)
       .map((row) => normalizeImportedTicket(row, { ticketType, importedBy, fileName, importedAt }))
       .filter(Boolean);
     const byKey = new Map();
@@ -401,7 +407,9 @@ async function upsertManualField(body) {
     updatedAt: now,
   };
   ["riskReason", "remark", "unclosedReason", "blocker", "nextPlan", "expectedCloseAt", "latestProgress", "hasBlocker"].forEach((field) => {
-    if (Object.prototype.hasOwnProperty.call(body, field)) incoming[field] = clean(body[field]);
+    if (Object.prototype.hasOwnProperty.call(body, field)) {
+      incoming[field] = field === "hasBlocker" ? textToBoolean(body[field]) : clean(body[field]);
+    }
   });
 
   if (USE_SUPABASE) {
@@ -788,6 +796,29 @@ function decodeBase64File(value) {
   return Buffer.from(base64, "base64");
 }
 
+function filterRowsForTicketType(rows, selectedType) {
+  const target = normalizeTicketTypeName(selectedType);
+  return (rows || []).filter((row) => {
+    const detected = normalizeTicketTypeName(extractImportedTicketType(row));
+    return !detected || detected === target;
+  });
+}
+
+function extractImportedTicketType(row = {}) {
+  return firstClean(row, ["工单类型", "类型", "业务类型", "单据类型", "客诉类型", "来源类型"]);
+}
+
+function normalizeTicketTypeName(value) {
+  const text = clean(value);
+  if (!text) return "";
+  if (TICKET_TYPES.includes(text)) return text;
+  if (text.includes("质量")) return "质量工单";
+  if (text.includes("支持")) return "支持工单";
+  if (text.includes("市场")) return "市场工单";
+  if (text.includes("供应")) return "供应工单";
+  return "";
+}
+
 function firstClean(row, fields) {
   for (const field of fields) {
     const value = clean(row[field]);
@@ -856,6 +887,10 @@ function isEndedStatus(value) {
 
 function makeId(prefix) {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function uniqueTicketTypes(rows) {
+  return [...new Set((rows || []).map((row) => clean(row.ticketType)).filter(Boolean))];
 }
 
 async function supabaseFetch(endpoint, options = {}) {
@@ -950,6 +985,13 @@ function emptyToNull(value) {
 
 function clean(value) {
   return String(value ?? "").trim();
+}
+
+function textToBoolean(value) {
+  if (value === true) return true;
+  if (value === false || value === null || value === undefined) return false;
+  const text = clean(value).toLowerCase();
+  return ["true", "t", "1", "yes", "y", "是", "有", "有卡点"].includes(text);
 }
 
 function parseProgress(value) {

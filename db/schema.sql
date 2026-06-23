@@ -39,7 +39,7 @@ create table if not exists public.manual_fields (
   next_plan text,
   expected_close_at date,
   latest_progress text,
-  has_blocker text,
+  has_blocker boolean not null default false,
   updated_by text,
   updated_at timestamptz not null default now(),
   created_at timestamptz not null default now()
