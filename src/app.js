@@ -395,6 +395,8 @@
       "更新时间": notes["更新时间"] || clean(row["更新时间"]),
     };
 
+    record["制单超2天风险"] = isCreateOver2Risk(record) ? "是" : "";
+    record["风险提示"] = record["制单超2天风险"] ? "制单超2天风险" : "";
     record["风险等级"] = calculateRiskLevel(record);
     return record;
   }
@@ -851,22 +853,24 @@
               <th>制单时间</th>
               <th>问题简述</th>
               <th>是否有卡点</th>
+              <th>风险提示</th>
               <th>风险原因</th>
               <th>备注</th>
             </tr>
           </thead>
           <tbody>
             ${rows.length ? rows.map((row) => `
-              <tr class="${isBlockerTracked(row) ? "has-blocker-row" : ""}" data-ticket-detail="${escAttr(row["工单号"])}" data-ticket-type="${escAttr(row["工单类型"])}">
+              <tr class="${[isBlockerTracked(row) ? "has-blocker-row" : "", isCreateOver2Risk(row) ? "create-over2-row" : ""].filter(Boolean).join(" ")}" data-ticket-detail="${escAttr(row["工单号"])}" data-ticket-type="${escAttr(row["工单类型"])}">
                 <td><b>${esc(row["工单号/客诉单号"])}</b></td>
                 <td>${esc(ticketCreator(row) || "-")}</td>
                 <td>${esc(row["制单时间"])}</td>
                 <td>${clip(row["问题简述"])}</td>
                 <td>${ticketBlockCheckbox(row)}</td>
+                <td>${riskHintBadge(row)}</td>
                 <td>${ticketTextarea(row, "风险原因")}</td>
                 <td>${ticketTextarea(row, "备注")}<span class="save-status" data-save-status data-ticket-id="${escAttr(row["工单号"])}"></span></td>
               </tr>
-            `).join("") : `<tr><td colspan="7" class="muted">当前筛选下没有高风险工单。</td></tr>`}
+            `).join("") : `<tr><td colspan="8" class="muted">当前筛选下没有高风险工单。</td></tr>`}
           </tbody>
         </table>
       </div>
@@ -913,6 +917,7 @@
               <th>制单人</th>
               <th>工单号/客诉单号</th>
               <th>已流转天数</th>
+              <th>风险提示</th>
               <th>单据状态</th>
               <th>工单状态</th>
               <th>区域</th>
@@ -925,11 +930,12 @@
           </thead>
           <tbody>
             ${rows.map((row) => `
-              <tr data-ticket-detail="${escAttr(row["工单号"])}" data-ticket-type="${escAttr(row["工单类型"])}">
+              <tr class="${isCreateOver2Risk(row) ? "create-over2-row" : ""}" data-ticket-detail="${escAttr(row["工单号"])}" data-ticket-type="${escAttr(row["工单类型"])}">
                 <td>${riskBadge(row["风险等级"])}</td>
                 <td>${esc(row["制单人/创建人"] || "-")}</td>
                 <td><b>${esc(row["工单号/客诉单号"])}</b></td>
                 <td>${esc(row["已流转天数"])} 天</td>
+                <td>${riskHintBadge(row)}</td>
                 <td>${esc(row["单据状态"] || "-")}</td>
                 <td>${esc(row["工单状态"] || "空白")}</td>
                 <td>${esc(row["区域"] || "-")}</td>
@@ -1157,6 +1163,13 @@
             </select>
           </label>
           <label>
+            <span>导入模式</span>
+            <select id="importMode">
+              <option value="full" selected>全量刷新当前类型</option>
+              <option value="incremental">增量导入/更新</option>
+            </select>
+          </label>
+          <label>
             <span>导入人/处理人员</span>
             <input id="importedBy" type="text" value="${escAttr(currentEditorName())}" placeholder="例如：张三" />
           </label>
@@ -1185,7 +1198,7 @@
   function renderImportResult() {
     if (state.importError) return esc(state.importError);
     if (state.importResult?.message) return esc(state.importResult.message);
-    return "请选择工单类型、导入人和文件后开始导入。";
+    return "请选择工单类型、导入模式、导入人和文件后开始导入。默认使用“全量刷新当前类型”。";
   }
 
   function renderImportLogs() {
@@ -1198,10 +1211,12 @@
               <th>导入时间</th>
               <th>导入人</th>
               <th>工单类型</th>
+              <th>导入模式</th>
               <th>文件名</th>
               <th>总数</th>
               <th>新增</th>
               <th>更新</th>
+              <th>归档旧工单</th>
               <th>已结束剔除</th>
               <th>保留人工字段</th>
               <th>状态</th>
@@ -1214,10 +1229,12 @@
                 <td>${esc(formatDateTimeValue(log.importedAt))}</td>
                 <td>${esc(log.importedBy || "-")}</td>
                 <td>${esc(log.ticketType || "-")}</td>
+                <td>${esc(importModeLabel(log.importMode))}</td>
                 <td>${esc(log.fileName || "-")}</td>
                 <td>${esc(log.totalRows ?? 0)}</td>
                 <td>${esc(log.insertedCount ?? 0)}</td>
                 <td>${esc(log.updatedCount ?? 0)}</td>
+                <td>${esc(log.archivedCount ?? 0)}</td>
                 <td>${esc(log.endedCount ?? 0)}</td>
                 <td>${esc(log.preservedManualCount ?? 0)}</td>
                 <td><span class="badge ${log.status === "success" ? "risk-low" : "risk-high"}">${esc(log.status === "success" ? "成功" : "失败")}</span></td>
@@ -1233,6 +1250,7 @@
   async function handleImportTickets() {
     const file = $("importFile")?.files?.[0];
     const ticketType = $("importTicketType")?.value || "";
+    const importMode = $("importMode")?.value || "full";
     const importedBy = clean($("importedBy")?.value) || currentEditorName();
     const button = $("importTickets");
     const resultBox = $("importResult");
@@ -1254,7 +1272,7 @@
     }
 
     try {
-      const result = await storage().importTickets({ ticketType, importedBy, file });
+      const result = await storage().importTickets({ ticketType, importedBy, file, importMode });
       state.importResult = result.summary || result.log || { message: "导入完成。" };
       state.importError = "";
 
@@ -1350,6 +1368,7 @@
               <th>制单人/创建人</th>
               <th>制单时间</th>
               <th>已流转天数</th>
+              <th>风险提示</th>
               <th>单据状态</th>
               <th>工单状态</th>
               <th>区域</th>
@@ -1367,12 +1386,13 @@
           </thead>
           <tbody>
             ${rows.map((row) => `
-              <tr>
+              <tr class="${isCreateOver2Risk(row) ? "create-over2-row" : ""}">
                 <td>${esc(row["工单类型"])}</td>
                 <td><b>${esc(row["工单号"])}</b></td>
                 <td>${esc(row["制单人/创建人"])}</td>
                 <td>${esc(row["制单时间"])}</td>
                 <td>${esc(row["已流转天数"])} 天</td>
+                <td>${riskHintBadge(row)}</td>
                 <td>${esc(row["单据状态"] || "-")}</td>
                 <td>${esc(row["工单状态"] || "-")}</td>
                 <td>${esc(row["区域"] || "-")}</td>
@@ -1687,10 +1707,17 @@
 
   function calculateRiskLevel(record) {
     const days = getTicketAgeDays(record, state.dataDate);
+    if (isCreateOver2Risk(record)) return "高风险";
     if (days > 10) return "高风险";
     if (days > 6) return "中风险";
     if (days <= 4) return "低风险";
     return "关注/待观察";
+  }
+
+  function isCreateOver2Risk(record) {
+    if (!isActiveRecord(record)) return false;
+    const days = getTicketAgeDays(record, state.dataDate);
+    return Number.isFinite(days) && days > 2;
   }
 
   function getTicketAgeDays(record, dataDate = state.dataDate) {
@@ -1800,6 +1827,11 @@
     if (risk === "低风险") return `<span class="badge risk-low">低风险</span>`;
     if (risk === "关注/待观察") return `<span class="badge risk-watch">关注/待观察</span>`;
     return `<span class="badge risk-closed">${esc(risk || "已完结")}</span>`;
+  }
+
+  function riskHintBadge(row) {
+    if (isCreateOver2Risk(row)) return `<span class="badge risk-over2">制单超2天风险</span>`;
+    return `<span class="muted">-</span>`;
   }
 
   function clip(value) {
@@ -1917,6 +1949,10 @@
 
   function formatFileDate(date) {
     return formatDateTime(date).replace(/[-: ]/g, "");
+  }
+
+  function importModeLabel(value) {
+    return clean(value) === "incremental" ? "增量导入/更新" : "全量刷新当前类型";
   }
 
   function parseErrorMessage(error) {

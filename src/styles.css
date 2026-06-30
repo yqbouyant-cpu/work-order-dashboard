@@ -481,6 +481,20 @@ tbody tr:hover {
   border: 1px solid #fecdca;
 }
 
+.risk-over2 {
+  color: #b42318;
+  background: #fff1f0;
+  border: 1px solid #fecdca;
+}
+
+.create-over2-row {
+  background: #fff8f6;
+}
+
+.create-over2-row:hover {
+  background: #fff1f0;
+}
+
 .risk-medium {
   color: var(--orange);
   background: #fff7ed;
