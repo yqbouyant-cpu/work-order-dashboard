@@ -13,7 +13,7 @@
       <p class="eyebrow">工单风险与闭环管理</p>
       <h1 id="pageTitle">单日总汇总表</h1>
       <p class="header-note">
-        数据日期：<span id="dataDate">读取中</span>｜数据范围：仅排除单据状态为“已结束”的工单，其余工单按当前单据状态和工单状态展示｜人员按制单人/创建人划分｜高风险：超10天；中风险：超6天；低风险：4天内
+        数据日期：<span id="dataDate">读取中</span>｜数据范围：仅排除单据状态为“已结束”的工单，其余工单按当前单据状态和工单状态展示｜人员按制单人/创建人划分｜高风险：超10天；中风险：超6天且不超过10天；低风险：6天内
       </p>
     </div>
     <div class="header-actions">
@@ -28,7 +28,7 @@
     <button class="tab-button" type="button" data-tab="supply">供应工单</button>
     <button class="tab-button" type="button" data-tab="market">市场工单</button>
     <button class="tab-button" type="button" data-tab="support">支持工单</button>
-    <button class="tab-button" type="button" data-tab="project">项目专项跟进</button>
+    <button class="tab-button" type="button" data-tab="createTimeout">超2天待制单</button>
     <button class="tab-button" type="button" data-tab="import">数据导入/刷新</button>
   </nav>
 
