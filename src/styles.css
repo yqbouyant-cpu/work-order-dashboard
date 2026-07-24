@@ -258,6 +258,25 @@ textarea:focus {
   background: var(--blue-dark);
 }
 
+.button.danger {
+  border-color: var(--red);
+  background: var(--red);
+}
+
+.button.danger:hover {
+  background: #b42318;
+}
+
+.button.ghost {
+  color: var(--blue);
+  background: #fff;
+}
+
+.button.ghost:hover {
+  color: #fff;
+  background: var(--blue);
+}
+
 .button:disabled {
   cursor: not-allowed;
   opacity: 0.62;
@@ -396,6 +415,10 @@ table {
   min-width: 1540px;
 }
 
+.create-timeout-table {
+  min-width: 1680px;
+}
+
 .high-risk-table {
   min-width: 1260px;
 }
@@ -428,7 +451,9 @@ table {
 }
 
 .detail-table {
-  min-width: 2100px;
+  width: max-content;
+  min-width: 100%;
+  table-layout: auto;
 }
 
 .project-table {
@@ -491,6 +516,12 @@ tbody tr:hover {
   color: var(--green);
   background: #ecfdf3;
   border: 1px solid #abefc6;
+}
+
+.risk-pending {
+  color: var(--blue);
+  background: #eff6ff;
+  border: 1px solid #bfdbfe;
 }
 
 .risk-watch {
@@ -706,6 +737,12 @@ tbody tr:hover {
   height: 16px;
 }
 
+.field-disabled {
+  cursor: not-allowed;
+  color: var(--muted);
+  background: #f2f4f7;
+}
+
 .save-status {
   display: block;
   margin-top: 6px;
@@ -759,18 +796,25 @@ tbody tr:hover {
 
 .detail-drawer {
   position: fixed;
-  top: 0;
-  right: 0;
-  bottom: 0;
+  top: 5vh;
+  left: 50%;
   z-index: 21;
   display: flex;
   flex-direction: column;
-  width: min(1180px, 92vw);
+  width: 90vw;
+  height: 90vh;
+  max-width: none;
+  max-height: 90vh;
+  min-width: 0;
+  transform: translateX(-50%);
+  overflow: hidden;
+  border-radius: 8px;
   background: #fff;
-  box-shadow: -18px 0 40px rgba(22, 39, 71, 0.2);
+  box-shadow: 0 22px 54px rgba(22, 39, 71, 0.22);
 }
 
 .drawer-head {
+  flex: 0 0 auto;
   display: flex;
   justify-content: space-between;
   gap: 16px;
@@ -780,14 +824,68 @@ tbody tr:hover {
 }
 
 .drawer-body {
-  flex: 1;
-  overflow: auto;
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
   padding: 16px;
   background: var(--bg);
 }
 
 .drawer-table-wrap {
+  flex: 1 1 auto;
+  width: 100%;
+  max-width: 100%;
   max-height: none;
+  min-height: 0;
+  min-width: 0;
+  overflow-x: auto;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.drawer-table-wrap .detail-table {
+  width: max-content;
+  min-width: 100%;
+  table-layout: auto;
+}
+
+.drawer-table-wrap .detail-table th {
+  white-space: nowrap;
+}
+
+.drawer-table-wrap .detail-table td {
+  min-width: 92px;
+  max-width: none;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.drawer-table-wrap .detail-table td:nth-child(9) {
+  min-width: min(320px, 34vw);
+  max-width: min(460px, 40vw);
+}
+
+.drawer-table-wrap .detail-table .clip-text {
+  max-width: min(420px, 38vw);
+  max-height: none;
+  overflow: visible;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.drawer-table-wrap textarea {
+  min-width: min(190px, 32vw);
+}
+
+@supports (height: 100dvh) {
+  .detail-drawer {
+    height: 90dvh;
+    max-height: 90dvh;
+  }
 }
 
 .import-form {
@@ -832,6 +930,145 @@ tbody tr:hover {
 
 .import-log-table .clip-text {
   max-width: 320px;
+}
+
+.daily-reconcile-panel {
+  border-color: #bcd0f7;
+}
+
+.risk-note {
+  margin: 10px 0 14px;
+  padding: 10px 12px;
+  border: 1px solid #fed7aa;
+  border-radius: 6px;
+  background: #fff7ed;
+  color: #9a3412;
+  font-weight: 800;
+}
+
+.daily-file-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(180px, 1fr));
+  gap: 12px;
+  align-items: end;
+}
+
+.selected-file {
+  display: block;
+  margin-top: 6px;
+  color: var(--muted);
+  font-size: 12px;
+  font-style: normal;
+  font-weight: 800;
+}
+
+.daily-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+  margin-top: 12px;
+}
+
+.confirm-check {
+  display: inline-flex;
+  gap: 8px;
+  align-items: center;
+  min-height: 38px;
+  padding: 0 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface-soft);
+  font-weight: 900;
+}
+
+.confirm-check input {
+  width: auto;
+}
+
+.confirm-check span {
+  margin: 0;
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.daily-preview,
+.daily-run-result,
+.daily-summary {
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.daily-preview h3,
+.daily-run-result h3 {
+  margin-bottom: 10px;
+}
+
+.daily-preview-table th,
+.daily-preview-table td {
+  white-space: nowrap;
+}
+
+.daily-detail-block {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--surface-soft);
+}
+
+.daily-detail-block.is-ok {
+  border-color: #a6dfc8;
+  color: var(--green);
+  background: #effbf5;
+  font-weight: 900;
+}
+
+.daily-detail-block.danger-zone {
+  border-color: #f3b5ad;
+  background: #fff8f6;
+}
+
+.detail-list-group + .detail-list-group {
+  margin-top: 10px;
+}
+
+.detail-list-group ul {
+  margin: 8px 0 0;
+  padding-left: 20px;
+}
+
+.delete-ticket-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  max-height: 170px;
+  margin-top: 10px;
+  overflow: auto;
+}
+
+.delete-ticket-list span {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 2px 8px;
+  border: 1px solid #fecaca;
+  border-radius: 999px;
+  background: #fff;
+  color: #991b1b;
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.daily-summary .compact {
+  margin-bottom: 10px;
+}
+
+.daily-summary textarea {
+  width: 100%;
+  min-height: 260px;
+  white-space: pre-wrap;
 }
 
 .muted {
@@ -884,5 +1121,35 @@ tbody tr:hover {
   .panel-heading {
     align-items: flex-start;
     flex-direction: column;
+  }
+
+  .detail-drawer {
+    top: 3vh;
+    left: 50%;
+    width: 94vw;
+    height: 94vh;
+    max-width: none;
+    max-height: 94vh;
+    transform: translateX(-50%);
+  }
+
+  @supports (height: 100dvh) {
+    .detail-drawer {
+      height: 94dvh;
+      max-height: 94dvh;
+    }
+  }
+
+  .drawer-body {
+    padding: 12px;
+  }
+
+  .drawer-table-wrap {
+    max-height: none;
+  }
+
+  .drawer-table-wrap .detail-table td:nth-child(9),
+  .drawer-table-wrap .detail-table .clip-text {
+    max-width: min(360px, 58vw);
   }
 }
