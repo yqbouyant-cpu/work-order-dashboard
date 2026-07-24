@@ -6,11 +6,11 @@
 
   const TABS = [
     { key: "summary", label: "单日总汇总表", type: "", kicker: "总览", hint: "汇总质量、供应、市场、支持四类工单。" },
-    { key: "createTimeout", label: "制单超2天待处理工单", type: "", kicker: "待处理", hint: "单据状态为制单，且制单时间超过2天的工单，不参与高/中/低风险统计。" },
     { key: "quality", label: "质量工单", type: "质量工单", kicker: "分类模块", hint: "质量客诉、上门服务、方案回复和结案情况。" },
     { key: "supply", label: "供应工单", type: "供应工单", kicker: "分类模块", hint: "供应异常、补发处理、方案回复和最终结案。" },
     { key: "market", label: "市场工单", type: "市场工单", kicker: "分类模块", hint: "市场服务、经销商问题、分公司处理和经理审核。" },
     { key: "support", label: "支持工单", type: "支持工单", kicker: "分类模块", hint: "资质文件、支持诉求、审核状态和处理跟进。" },
+    { key: "createTimeout", label: "超2天待制单", type: "", kicker: "待制单", hint: "单据状态为制单，且制单时间超过2天的工单，不参与高/中/低风险统计。" },
     { key: "import", label: "数据导入/刷新", type: "", kicker: "数据导入", hint: "按客诉单号全量对账更新基础数据，人工维护字段按规则保留。" },
   ];
 
@@ -416,7 +416,7 @@
       materialDescription,
       "产品型号": materialDescription,
       "关键字段状态": clean(row["关键字段状态"] || row["处理方案回复"] || row["最终结案/工程师结案"] || row["初步/处理回复"]),
-      "有卡点": clean(notes["有卡点"] || row["有卡点"]),
+      "有卡点": hasOwnField(notes, "有卡点") ? clean(notes["有卡点"]) : clean(row["有卡点"]),
       "风险原因": clean(notes["风险原因"] || row["风险原因"]),
       "备注": clean(notes["备注"] || row["备注"]),
       "更新时间": notes["更新时间"] || clean(row["更新时间"]),
@@ -648,7 +648,7 @@
     const blockedCount = rows.filter(isBlockerFlagged).length;
     return `
       <section class="card-grid summary-cards">
-        ${metricCard("待处理工单", count, "单据状态=制单 且 制单超过2天")}
+        ${metricCard("超2天待制单", count, "单据状态=制单 且 制单超过2天")}
         ${metricCard("已标记卡点", blockedCount, "人工勾选 是否有卡点=是")}
         ${metricCard("未标记卡点", Math.max(0, count - blockedCount), "当前未勾选卡点")}
         ${metricCard("涉及人员", getOwnerList(rows).length, "按制单人/创建人统计")}
@@ -656,8 +656,8 @@
       <section class="panel create-timeout-panel">
         <div class="panel-heading">
           <div>
-            <p class="section-kicker">制单待处理</p>
-            <h2>制单超2天待处理工单</h2>
+            <p class="section-kicker">超时待制单</p>
+            <h2>超2天待制单管理</h2>
             <p class="board-note">仅展示单据状态为“制单”且当前日期 - 制单时间 &gt; 2 天的工单；这些工单不进入高风险、中风险、低风险统计。</p>
           </div>
         </div>
@@ -667,7 +667,7 @@
   }
 
   function renderCreateTimeoutTable(rows) {
-    if (!rows.length) return emptyState("当前筛选下没有制单超2天待处理工单。");
+    if (!rows.length) return emptyState("当前筛选下没有超2天待制单工单。");
     return `
       <div class="table-wrap create-timeout-wrap">
         <table class="create-timeout-table">
@@ -675,16 +675,17 @@
             <tr>
               <th>工单类型</th>
               <th>客诉单号</th>
-              <th>制单人</th>
+              <th>制单人/创建人</th>
               <th>制单时间</th>
-              <th>已制单天数</th>
+              <th>已流转天数</th>
               <th>区域</th>
+              <th>客户/联系人</th>
               <th>问题简述</th>
-              <th>单据状态</th>
               <th>是否有卡点</th>
               <th>当前卡点</th>
               <th>下一步规划</th>
               <th>预计闭环时间</th>
+              <th>最新进展</th>
             </tr>
           </thead>
           <tbody>
@@ -696,14 +697,15 @@
                   <td><b>${esc(row["工单号/客诉单号"])}</b></td>
                   <td>${esc(ticketCreator(row) || "-")}</td>
                   <td>${esc(row["制单时间"] || "-")}</td>
-                  <td>${esc(getCreateAgeDays(row))} 天</td>
+                  <td>${esc(row["已流转天数"] || getCreateAgeDays(row))} 天</td>
                   <td>${esc(row["区域"] || "-")}</td>
+                  <td>${esc(row["客户/联系人"] || "-")}</td>
                   <td>${clip(row["问题简述"])}</td>
-                  <td>${esc(row["单据状态"] || "-")}</td>
                   <td>${ticketBlockCheckbox(row)}</td>
                   <td>${ticketTextarea(row, "当前卡点", { disabled: !blockerEnabled })}</td>
                   <td>${ticketTextarea(row, "下一步规划", { disabled: !blockerEnabled })}</td>
-                  <td>${ticketDateEditor(row, "预计闭环时间", { disabled: !blockerEnabled })}<span class="save-status" data-save-status data-ticket-id="${escAttr(row["工单号"])}"></span></td>
+                  <td>${ticketDateEditor(row, "预计闭环时间", { disabled: !blockerEnabled })}</td>
+                  <td>${ticketTextarea(row, "最新进展", { disabled: !blockerEnabled })}<span class="save-status" data-save-status data-ticket-id="${escAttr(row["工单号"])}"></span></td>
                 </tr>
               `;
             }).join("")}
@@ -1850,7 +1852,7 @@
     return `
       <label class="check-cell">
         <input type="checkbox" data-ticket-id="${escAttr(row["工单号"])}" data-ticket-type="${escAttr(row["工单类型"])}" data-ticket-field="有卡点" value="是" ${checked} />
-        <span>${checked ? "是" : "否"}</span>
+        <span>是</span>
       </label>
     `;
   }
@@ -2271,6 +2273,10 @@
 
   function clean(value) {
     return String(value ?? "").trim();
+  }
+
+  function hasOwnField(object, field) {
+    return Object.prototype.hasOwnProperty.call(object || {}, field);
   }
 
   function firstClean(row, fields) {
