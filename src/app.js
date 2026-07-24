@@ -6,12 +6,12 @@
 
   const TABS = [
     { key: "summary", label: "单日总汇总表", type: "", kicker: "总览", hint: "汇总质量、供应、市场、支持四类工单。" },
+    { key: "createTimeout", label: "制单超2天待处理工单", type: "", kicker: "待处理", hint: "单据状态为制单，且制单时间超过2天的工单，不参与高/中/低风险统计。" },
     { key: "quality", label: "质量工单", type: "质量工单", kicker: "分类模块", hint: "质量客诉、上门服务、方案回复和结案情况。" },
     { key: "supply", label: "供应工单", type: "供应工单", kicker: "分类模块", hint: "供应异常、补发处理、方案回复和最终结案。" },
     { key: "market", label: "市场工单", type: "市场工单", kicker: "分类模块", hint: "市场服务、经销商问题、分公司处理和经理审核。" },
     { key: "support", label: "支持工单", type: "支持工单", kicker: "分类模块", hint: "资质文件、支持诉求、审核状态和处理跟进。" },
-    { key: "project", label: "项目专项跟进", type: "", kicker: "项目专项", hint: "手动维护项目客诉或项目型工单推进阶段。" },
-    { key: "import", label: "数据导入/刷新", type: "", kicker: "数据导入", hint: "上传每日 Excel/CSV，按工单号增量更新基础数据，人工维护字段不会被覆盖。" },
+    { key: "import", label: "数据导入/刷新", type: "", kicker: "数据导入", hint: "按客诉单号全量对账更新基础数据，人工维护字段按规则保留。" },
   ];
 
   const TICKET_TYPES = ["质量工单", "支持工单", "市场工单", "供应工单"];
@@ -47,6 +47,15 @@
     importResult: null,
     importError: "",
     importBusy: false,
+    dailyReconcile: {
+      preview: null,
+      result: null,
+      error: "",
+      summary: "",
+      files: {},
+      signature: "",
+      busy: false,
+    },
     storageMode: "loading",
     storageMessage: "正在连接协作保存服务...",
   };
@@ -115,6 +124,24 @@
       const importButton = event.target.closest("#importTickets");
       if (importButton) {
         handleImportTickets();
+        return;
+      }
+
+      const dailyPreviewButton = event.target.closest("#previewDailyReconcile");
+      if (dailyPreviewButton) {
+        handlePreviewDailyReconcile();
+        return;
+      }
+
+      const dailyConfirmButton = event.target.closest("#confirmDailyReconcile");
+      if (dailyConfirmButton) {
+        handleConfirmDailyReconcile();
+        return;
+      }
+
+      const copyDailySummaryButton = event.target.closest("#copyDailySummary");
+      if (copyDailySummaryButton) {
+        copyDailySummary();
         return;
       }
 
@@ -345,7 +372,7 @@
   }
 
   function normalizeRecord(row, dataDate) {
-    const id = clean(row["工单号"] || row["客诉单号"] || row["单据编号"] || row["支持单号"]);
+    const id = clean(row["工单号"] || row["客诉单号"] || row["客诉编号"] || row["投诉单号"] || row["单据编号"] || row["支持单号"] || row["单号"]);
     const ticketType = clean(row["工单类型"]);
     const notes = readTicketManualFields(ticketType, id);
     const status = clean(row["单据状态"]);
@@ -445,7 +472,7 @@
 
     const ownerFilter = $("ownerFilter");
     const currentValue = state.ownerByTab[state.activeTab] || "";
-    const owners = getOwnerList(currentTab().key === "project" ? filteredProjects(false) : scopeRows(false));
+    const owners = getOwnerList(scopeRows(false));
     ownerFilter.innerHTML = `<option value="">全部人员</option>${owners.map((owner) => `<option value="${escAttr(owner)}">${esc(owner)}</option>`).join("")}`;
     ownerFilter.value = owners.includes(currentValue) ? currentValue : "";
     state.ownerByTab[state.activeTab] = ownerFilter.value;
@@ -454,10 +481,10 @@
   function renderTabContent() {
     const active = currentTab();
     renderToolbar();
-    if (active.key === "project") {
-      $("tabContent").innerHTML = renderProjectFollowUpTab(filteredProjects());
-    } else if (active.key === "import") {
+    if (active.key === "import") {
       $("tabContent").innerHTML = renderImportTab();
+    } else if (active.key === "createTimeout") {
+      $("tabContent").innerHTML = renderCreateTimeoutTab(filteredRows());
     } else if (active.key === "summary") {
       $("tabContent").innerHTML = renderSummaryTab(filteredRows());
     } else {
@@ -473,6 +500,7 @@
     const active = currentTab();
     let rows = getActiveRecords(state.tickets);
     if (active.type) rows = rows.filter((row) => row["工单类型"] === active.type);
+    if (active.key === "createTimeout") rows = createTimeoutRows(rows);
     if (!includeSearchAndOwner) return uniqueRows(rows);
     return filterRows(rows);
   }
@@ -519,9 +547,10 @@
         ${metricCard("支持工单数", kpis.support, "支持工单")}
         ${metricCard("市场工单数", kpis.market, "市场工单")}
         ${metricCard("供应工单数", kpis.supply, "供应工单")}
-        ${drillCard("高风险工单数", kpis.high, "已流转天数 > 10 天", "high", "高风险工单明细")}
-        ${drillCard("中风险工单数", kpis.medium, "已流转天数 > 6 天", "medium", "中风险工单明细")}
-        ${drillCard("有卡点工单数", kpis.blocked, "人工维护字段有内容或已标记", "blocked", "有卡点工单明细")}
+        ${drillCard("高风险工单数", kpis.high, "已流转 > 10 天", "high", "高风险工单明细")}
+        ${drillCard("中风险工单数", kpis.medium, "已流转 > 6 天且 ≤ 10 天", "medium", "中风险工单明细")}
+        ${drillCard("超2天待制单数", kpis.createTimeout, "单据状态=制单且制单超过2天", "createTimeout", "制单超2天待处理工单明细")}
+        ${drillCard("有卡点工单数", kpis.blocked, "人工勾选“是否有卡点=是”", "blocked", "有卡点工单明细")}
       </section>
       <section class="panel">
         <div class="panel-heading">
@@ -586,9 +615,9 @@
           </div>
         </div>
         <div class="risk-overview">
-          ${drillCard("高风险", riskRows(rows, "高风险").length, "已流转天数 > 10 天", "high", `${tab.label}高风险明细`)}
-          ${drillCard("中风险", riskRows(rows, "中风险").length, "已流转天数 > 6 天", "medium", `${tab.label}中风险明细`)}
-          ${drillCard("低风险", riskRows(rows, "低风险").length, "4 天内或正常周期", "low", `${tab.label}低风险明细`)}
+          ${drillCard("高风险", riskRows(rows, "高风险").length, "已流转 > 10 天", "high", `${tab.label}高风险明细`)}
+          ${drillCard("中风险", riskRows(rows, "中风险").length, "已流转 > 6 天且 ≤ 10 天", "medium", `${tab.label}中风险明细`)}
+          ${drillCard("低风险", riskRows(rows, "低风险").length, "已流转 ≤ 6 天", "low", `${tab.label}低风险明细`)}
         </div>
       </section>
       <section class="panel">
@@ -611,6 +640,76 @@
       </section>
       ${renderBlockedSection(rows)}
       ${renderDetailBoard(rows)}
+    `;
+  }
+
+  function renderCreateTimeoutTab(rows) {
+    const count = rows.length;
+    const blockedCount = rows.filter(isBlockerFlagged).length;
+    return `
+      <section class="card-grid summary-cards">
+        ${metricCard("待处理工单", count, "单据状态=制单 且 制单超过2天")}
+        ${metricCard("已标记卡点", blockedCount, "人工勾选 是否有卡点=是")}
+        ${metricCard("未标记卡点", Math.max(0, count - blockedCount), "当前未勾选卡点")}
+        ${metricCard("涉及人员", getOwnerList(rows).length, "按制单人/创建人统计")}
+      </section>
+      <section class="panel create-timeout-panel">
+        <div class="panel-heading">
+          <div>
+            <p class="section-kicker">制单待处理</p>
+            <h2>制单超2天待处理工单</h2>
+            <p class="board-note">仅展示单据状态为“制单”且当前日期 - 制单时间 &gt; 2 天的工单；这些工单不进入高风险、中风险、低风险统计。</p>
+          </div>
+        </div>
+        ${renderCreateTimeoutTable(rows)}
+      </section>
+    `;
+  }
+
+  function renderCreateTimeoutTable(rows) {
+    if (!rows.length) return emptyState("当前筛选下没有制单超2天待处理工单。");
+    return `
+      <div class="table-wrap create-timeout-wrap">
+        <table class="create-timeout-table">
+          <thead>
+            <tr>
+              <th>工单类型</th>
+              <th>客诉单号</th>
+              <th>制单人</th>
+              <th>制单时间</th>
+              <th>已制单天数</th>
+              <th>区域</th>
+              <th>问题简述</th>
+              <th>单据状态</th>
+              <th>是否有卡点</th>
+              <th>当前卡点</th>
+              <th>下一步规划</th>
+              <th>预计闭环时间</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${rows.map((row) => {
+              const blockerEnabled = isBlockerFlagged(row);
+              return `
+                <tr class="${blockerEnabled ? "has-blocker-row" : ""}" data-ticket-detail="${escAttr(row["工单号"])}" data-ticket-type="${escAttr(row["工单类型"])}">
+                  <td>${esc(row["工单类型"])}</td>
+                  <td><b>${esc(row["工单号/客诉单号"])}</b></td>
+                  <td>${esc(ticketCreator(row) || "-")}</td>
+                  <td>${esc(row["制单时间"] || "-")}</td>
+                  <td>${esc(getCreateAgeDays(row))} 天</td>
+                  <td>${esc(row["区域"] || "-")}</td>
+                  <td>${clip(row["问题简述"])}</td>
+                  <td>${esc(row["单据状态"] || "-")}</td>
+                  <td>${ticketBlockCheckbox(row)}</td>
+                  <td>${ticketTextarea(row, "当前卡点", { disabled: !blockerEnabled })}</td>
+                  <td>${ticketTextarea(row, "下一步规划", { disabled: !blockerEnabled })}</td>
+                  <td>${ticketDateEditor(row, "预计闭环时间", { disabled: !blockerEnabled })}<span class="save-status" data-save-status data-ticket-id="${escAttr(row["工单号"])}"></span></td>
+                </tr>
+              `;
+            }).join("")}
+          </tbody>
+        </table>
+      </div>
     `;
   }
 
@@ -805,14 +904,9 @@
               <th>制单人/创建人</th>
               <th>制单时间</th>
               <th>已流转天数</th>
-              <th>单据状态</th>
-              <th>工单状态</th>
-              <th>问题简述</th>
-              <th>未结案原因</th>
               <th>当前卡点</th>
               <th>下一步规划</th>
               <th>预计闭环时间</th>
-              <th>最新进展</th>
             </tr>
           </thead>
           <tbody>
@@ -823,14 +917,9 @@
                 <td>${esc(row["制单人/创建人"])}</td>
                 <td>${esc(row["制单时间"])}</td>
                 <td>${esc(row["已流转天数"])} 天</td>
-                <td>${esc(row["单据状态"] || "-")}</td>
-                <td>${esc(row["工单状态"] || "-")}</td>
-                <td>${clip(row["问题简述"])}</td>
-                <td>${clip(row["未结案原因"])}</td>
                 <td>${clip(row["当前卡点"])}</td>
                 <td>${clip(row["下一步规划"])}</td>
                 <td>${esc(row["预计闭环时间"] || "-")}</td>
-                <td>${clip(row["最新进展"])}</td>
               </tr>
             `).join("")}
           </tbody>
@@ -876,7 +965,7 @@
   function renderDetailBoard(records) {
     const filters = currentBoardFilters();
     const filtered = applyDetailBoardFilters(records);
-    const riskOptions = ["高风险", "中风险", "低风险", "关注/待观察"];
+    const riskOptions = ["高风险", "中风险", "低风险", "制单待处理", "关注/待观察"];
     const statusOptions = uniq(records.map((row) => row["单据状态"]));
     const workStatusOptions = uniq(records.map((row) => row["工单状态"] || "空白"));
     const areaOptions = uniq(records.map((row) => row["区域"]));
@@ -1015,7 +1104,7 @@
           <div>
             <p class="section-kicker">卡点</p>
             <h2>卡点工单清单</h2>
-            <p class="board-note">来源于人工勾选“有卡点”或已填写当前卡点的工单，人工字段会保存到 Supabase。</p>
+            <p class="board-note">来源于人工勾选“是否有卡点=是”的工单，取消勾选后会立即移出清单。</p>
           </div>
           <span class="panel-count">${blocked.length} 单</span>
         </div>
@@ -1034,14 +1123,9 @@
               <th>工单类型</th>
               <th>客诉单号</th>
               <th>制单人</th>
-              <th>制单时间</th>
-              <th>已流转天数</th>
-              <th>问题简述</th>
               <th>当前卡点</th>
               <th>下一步规划</th>
               <th>预计闭环时间</th>
-              <th>最新进展</th>
-              <th>备注</th>
             </tr>
           </thead>
           <tbody>
@@ -1050,14 +1134,9 @@
                 <td>${esc(row["工单类型"])}</td>
                 <td><b>${esc(row["工单号/客诉单号"])}</b></td>
                 <td>${esc(ticketCreator(row) || "-")}</td>
-                <td>${esc(row["制单时间"] || "-")}</td>
-                <td>${esc(row["已流转天数"] || "0")} 天</td>
-                <td>${clip(row["问题简述"])}</td>
                 <td>${ticketTextarea(row, "当前卡点")}</td>
                 <td>${ticketTextarea(row, "下一步规划")}</td>
-                <td>${ticketDateEditor(row, "预计闭环时间")}</td>
-                <td>${ticketTextarea(row, "最新进展")}</td>
-                <td>${ticketTextarea(row, "备注")}<span class="save-status" data-save-status data-ticket-id="${escAttr(row["工单号"])}"></span></td>
+                <td>${ticketDateEditor(row, "预计闭环时间")}<span class="save-status" data-save-status data-ticket-id="${escAttr(row["工单号"])}"></span></td>
               </tr>
             `).join("")}
           </tbody>
@@ -1066,87 +1145,15 @@
     `;
   }
 
-  function renderProjectSection(rows) {
-    if (!rows.length) {
-      return `
-        <section class="panel">
-          <div class="panel-heading">
-            <div>
-              <p class="section-kicker">项目专项</p>
-              <h2>项目客诉/项目型工单进度</h2>
-            </div>
-          </div>
-          ${emptyState("当前筛选下没有项目专项跟进记录。")}
-        </section>
-      `;
-    }
-
-    return `
-      <section class="panel">
-        <div class="panel-heading">
-          <div>
-            <p class="section-kicker">项目专项</p>
-            <h2>项目客诉/项目型工单进度</h2>
-          </div>
-        </div>
-        <div class="table-wrap">
-          <table class="project-table">
-            <thead>
-              <tr>
-                <th>项目名称</th>
-                <th>关联工单号</th>
-                <th>工单类型</th>
-                <th>当前阶段</th>
-                <th>项目进度条</th>
-                <th>寄回状态</th>
-                <th>分析结论</th>
-                <th>定责结论</th>
-                <th>现场处理方案</th>
-                <th>当前卡点</th>
-                <th>下一步动作</th>
-                <th>责任人</th>
-                <th>预计完成时间</th>
-                <th>最新进展</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${rows.map((row) => `
-                <tr>
-                  <td>${projectTextEditor(row, "项目名称")}</td>
-                  <td>${projectTextEditor(row, "关联工单号")}</td>
-                  <td>${projectTextEditor(row, "工单类型")}</td>
-                  <td>${projectStageEditor(row)}</td>
-                  <td>${projectProgress(row)}</td>
-                  <td>${projectTextEditor(row, "寄回状态")}</td>
-                  <td>${projectTextEditor(row, "分析结论")}</td>
-                  <td>${projectTextEditor(row, "定责结论")}</td>
-                  <td>${projectTextEditor(row, "现场处理方案")}</td>
-                  <td>${projectTextEditor(row, "当前卡点")}</td>
-                  <td>${projectTextEditor(row, "下一步动作")}</td>
-                  <td>${projectTextEditor(row, "责任人")}</td>
-                  <td>${projectDateEditor(row, "预计完成时间")}</td>
-                  <td>${projectTextEditor(row, "最新进展")}<span class="save-status" data-save-status data-project-id="${escAttr(projectKey(row))}"></span></td>
-                </tr>
-              `).join("")}
-            </tbody>
-          </table>
-        </div>
-      </section>
-    `;
-  }
-
-  function renderProjectFollowUpTab(rows) {
-    return renderProjectSection(rows);
-  }
-
   function renderImportTab() {
     return `
+      ${renderDailyReconcilePanel()}
       <section class="panel import-panel">
         <div class="panel-heading">
           <div>
             <p class="section-kicker">每日刷新</p>
             <h2>导入 Excel / CSV 工单表</h2>
-            <p class="board-note">只更新基础工单数据；风险原因、备注、卡点、下一步规划、预计闭环时间、最新进展等人工维护字段会按工单号保留。</p>
+            <p class="board-note">按客诉单号全量对账：新表中存在的工单更新基础字段并保留人工维护字段；新表中不存在的同类型旧单会从看板和 manual_fields 删除。</p>
           </div>
         </div>
         <div class="import-form">
@@ -1159,8 +1166,7 @@
           <label>
             <span>导入模式</span>
             <select id="importMode">
-              <option value="full" selected>全量刷新当前类型</option>
-              <option value="incremental">增量导入/更新</option>
+              <option value="full" selected>全量对账当前类型</option>
             </select>
           </label>
           <label>
@@ -1189,10 +1195,205 @@
     `;
   }
 
+  function renderDailyReconcilePanel() {
+    const daily = state.dailyReconcile;
+    return `
+      <section class="panel daily-reconcile-panel">
+        <div class="panel-heading">
+          <div>
+            <p class="section-kicker">每日全量对账</p>
+            <h2>每日四类工单全量对账</h2>
+            <p class="board-note">请先做只读校验，再确认导入。确认导入会删除“Supabase 有但当天 Excel 没有”的旧单及对应人工维护字段。</p>
+          </div>
+        </div>
+        <div class="risk-note">
+          GitHub Pages 当前为公开访问页面。若 Supabase RLS 未限制写入/删除，建议批量导入只在本地可信环境使用；线上页面主要用于领导查看。
+        </div>
+        <div class="daily-file-grid">
+          ${IMPORT_TICKET_TYPES.map((type) => `
+            <label class="file-field">
+              <span>${esc(type)} Excel</span>
+              <input id="${dailyFileInputId(type)}" type="file" accept=".xlsx,.csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,text/csv" />
+              ${daily.files?.[type] ? `<em class="selected-file">已校验文件：${esc(daily.files[type].name)}</em>` : ""}
+            </label>
+          `).join("")}
+        </div>
+        <div class="daily-actions">
+          <button class="button" id="previewDailyReconcile" type="button">${daily.busy ? "处理中..." : "只读校验"}</button>
+          <label class="confirm-check">
+            <input id="confirmDailyDelete" type="checkbox" />
+            <span>我确认删除以上旧单及对应人工维护字段</span>
+          </label>
+          <button class="button danger" id="confirmDailyReconcile" type="button">确认导入</button>
+        </div>
+        <div class="import-result ${daily.error ? "is-error" : daily.result ? "is-success" : ""}">
+          ${daily.error ? esc(daily.error) : daily.result ? esc(daily.result.message || "每日全量对账完成。") : "请上传四类全量 Excel 后先点击“只读校验”。"}
+        </div>
+        ${renderDailyPreview()}
+        ${renderDailyRunResult()}
+        ${renderDailySummary()}
+      </section>
+    `;
+  }
+
+  function renderDailyPreview() {
+    const preview = state.dailyReconcile.preview;
+    if (!preview?.items?.length) return "";
+    return `
+      <div class="daily-preview">
+        <h3>只读校验结果</h3>
+        <div class="table-wrap">
+          <table class="daily-preview-table">
+            <thead>
+              <tr>
+                <th>工单类型</th>
+                <th>文件名</th>
+                <th>Excel有效行</th>
+                <th>识别单号</th>
+                <th>去重后单号</th>
+                <th>重复单号</th>
+                <th>Supabase当前</th>
+                <th>两边都有</th>
+                <th>Excel新增</th>
+                <th>准备删除</th>
+                <th>删人工字段</th>
+                <th>保留人工字段</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${preview.items.map((item) => `
+                <tr>
+                  <td>${esc(item.ticketType)}</td>
+                  <td>${esc(item.fileName)}</td>
+                  <td>${esc(item.totalRows)}</td>
+                  <td>${esc(item.validRows)}</td>
+                  <td>${esc(item.uniqueTicketCount)}</td>
+                  <td>${esc(item.duplicateTicketCount)}</td>
+                  <td>${esc(item.currentCount)}</td>
+                  <td>${esc(item.bothCount)}</td>
+                  <td>${esc(item.insertedCount)}</td>
+                  <td>${esc(item.prepareDeleteCount)}</td>
+                  <td>${esc(item.prepareDeleteManualCount)}</td>
+                  <td>${esc(item.preservedManualCount)}</td>
+                </tr>
+              `).join("")}
+            </tbody>
+          </table>
+        </div>
+        ${renderDuplicateDetails(preview.items)}
+        ${renderDeleteDetails(preview.items)}
+      </div>
+    `;
+  }
+
+  function renderDuplicateDetails(items) {
+    const duplicateItems = items.filter((item) => item.duplicates?.length);
+    if (!duplicateItems.length) {
+      return `<div class="daily-detail-block is-ok">未发现重复客诉单号。</div>`;
+    }
+    return `
+      <div class="daily-detail-block">
+        <h3>重复客诉单号明细</h3>
+        <p class="board-note">默认同一客诉单号只保留 Excel 最后一条；最后一条空字段会用同组其他行非空字段补齐基础信息，不覆盖 manual_fields。</p>
+        ${duplicateItems.map((item) => `
+          <div class="detail-list-group">
+            <strong>${esc(item.ticketType)}</strong>
+            <ul>
+              ${item.duplicates.map((dup) => `
+                <li>${esc(dup.ticketNo)}：出现 ${esc(dup.count)} 次，首次行 ${esc(dup.firstRow)}，最后行 ${esc(dup.lastRow)}；${esc(dup.rule)}</li>
+              `).join("")}
+            </ul>
+          </div>
+        `).join("")}
+      </div>
+    `;
+  }
+
+  function renderDeleteDetails(items) {
+    return `
+      <div class="daily-detail-block danger-zone">
+        <h3>准备删除的客诉单号清单</h3>
+        <p class="board-note">以下单号存在于 Supabase，但不在当天对应类型 Excel 中。确认导入后会删除 base_tickets 和对应 manual_fields。</p>
+        ${items.map((item) => `
+          <details ${item.prepareDeleteCount ? "open" : ""}>
+            <summary>${esc(item.ticketType)}：准备删除 ${esc(item.prepareDeleteCount)} 单，准备删除人工字段 ${esc(item.prepareDeleteManualCount)} 条</summary>
+            ${item.prepareDeleteTickets?.length ? `
+              <div class="delete-ticket-list">
+                ${item.prepareDeleteTickets.map((ticket) => `
+                  <span title="${escAttr(ticket.issueSummary || "")}">${esc(ticket.ticketNo || ticket.ticketKey)}</span>
+                `).join("")}
+              </div>
+            ` : `<div class="empty-state">无准备删除工单。</div>`}
+          </details>
+        `).join("")}
+      </div>
+    `;
+  }
+
+  function renderDailyRunResult() {
+    const result = state.dailyReconcile.result;
+    if (!result?.results?.length) return "";
+    return `
+      <div class="daily-run-result">
+        <h3>正式导入结果</h3>
+        <p class="module-hint">批次 ID：${esc(result.batchId || "-")}；状态：${esc(dailyStatusLabel(result.status))}</p>
+        <div class="table-wrap">
+          <table class="daily-preview-table">
+            <thead>
+              <tr>
+                <th>类型</th>
+                <th>状态</th>
+                <th>最终单号</th>
+                <th>新增</th>
+                <th>更新</th>
+                <th>删除旧单</th>
+                <th>删人工字段</th>
+                <th>保留人工字段</th>
+                <th>结果</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${result.results.map((item) => `
+                <tr>
+                  <td>${esc(item.ticketType || "-")}</td>
+                  <td><span class="badge ${item.status === "success" ? "risk-low" : "risk-high"}">${esc(item.status === "success" ? "成功" : "失败")}</span></td>
+                  <td>${esc(item.uniqueTicketCount ?? "-")}</td>
+                  <td>${esc(item.insertedCount ?? 0)}</td>
+                  <td>${esc(item.updatedCount ?? 0)}</td>
+                  <td>${esc(item.deletedCount ?? 0)}</td>
+                  <td>${esc(item.deletedManualCount ?? 0)}</td>
+                  <td>${esc(item.preservedManualCount ?? 0)}</td>
+                  <td>${esc(item.message || "")}</td>
+                </tr>
+              `).join("")}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    `;
+  }
+
+  function renderDailySummary() {
+    const summary = state.dailyReconcile.summary;
+    if (!summary) return "";
+    return `
+      <div class="daily-summary">
+        <div class="panel-heading compact">
+          <div>
+            <p class="section-kicker">每日总结</p>
+            <h3>每日工单总结</h3>
+          </div>
+          <button class="button ghost" id="copyDailySummary" type="button">复制总结</button>
+        </div>
+        <textarea readonly>${esc(summary)}</textarea>
+      </div>
+    `;
+  }
+
   function renderImportResult() {
     if (state.importError) return esc(state.importError);
     if (state.importResult?.message) return esc(state.importResult.message);
-    return "请选择工单类型、导入模式、导入人和文件后开始导入。默认使用“全量刷新当前类型”。";
+    return "请选择工单类型、导入模式、导入人和文件后开始导入。默认使用“全量对账当前类型”。";
   }
 
   function renderImportLogs() {
@@ -1202,18 +1403,22 @@
         <table class="import-log-table">
           <thead>
             <tr>
-              <th>导入时间</th>
-              <th>导入人</th>
-              <th>工单类型</th>
-              <th>导入模式</th>
-              <th>文件名</th>
-              <th>总数</th>
-              <th>新增</th>
-              <th>更新</th>
-              <th>归档旧工单</th>
-              <th>已结束剔除</th>
-              <th>保留人工字段</th>
-              <th>状态</th>
+                <th>导入时间</th>
+                <th>批次</th>
+                <th>导入人</th>
+                <th>工单类型</th>
+                <th>导入模式</th>
+                <th>文件名</th>
+                <th>总数</th>
+                <th>去重单号</th>
+                <th>新增</th>
+                <th>更新</th>
+                <th>删除/归档旧单</th>
+                <th>删人工字段</th>
+                <th>重复单号</th>
+                <th>已结束剔除</th>
+                <th>保留人工字段</th>
+                <th>状态</th>
               <th>结果</th>
             </tr>
           </thead>
@@ -1221,14 +1426,18 @@
             ${state.importLogs.map((log) => `
               <tr>
                 <td>${esc(formatDateTimeValue(log.importedAt))}</td>
+                <td>${esc(shortBatchId(log.batchId))}</td>
                 <td>${esc(log.importedBy || "-")}</td>
                 <td>${esc(log.ticketType || "-")}</td>
                 <td>${esc(importModeLabel(log.importMode))}</td>
                 <td>${esc(log.fileName || "-")}</td>
                 <td>${esc(log.totalRows ?? 0)}</td>
+                <td>${esc(log.uniqueTicketCount ?? log.totalRows ?? 0)}</td>
                 <td>${esc(log.insertedCount ?? 0)}</td>
                 <td>${esc(log.updatedCount ?? 0)}</td>
-                <td>${esc(log.archivedCount ?? 0)}</td>
+                <td>${esc(log.deletedCount ?? log.archivedCount ?? 0)}</td>
+                <td>${esc(log.deletedManualCount ?? 0)}</td>
+                <td>${esc(log.duplicateTicketCount ?? 0)}</td>
                 <td>${esc(log.endedCount ?? 0)}</td>
                 <td>${esc(log.preservedManualCount ?? 0)}</td>
                 <td><span class="badge ${log.status === "success" ? "risk-low" : "risk-high"}">${esc(log.status === "success" ? "成功" : "失败")}</span></td>
@@ -1291,6 +1500,199 @@
     }
   }
 
+  async function handlePreviewDailyReconcile() {
+    const button = $("previewDailyReconcile");
+    const files = collectDailyReconcileFiles(false);
+    state.dailyReconcile.error = "";
+    state.dailyReconcile.result = null;
+    state.dailyReconcile.summary = "";
+
+    try {
+      ensureDailyFiles(files);
+      state.dailyReconcile.busy = true;
+      if (button) {
+        button.disabled = true;
+        button.textContent = "校验中...";
+      }
+      const preview = await storage().previewDailyFullReconcile({ files });
+      state.dailyReconcile.files = files;
+      state.dailyReconcile.signature = preview.signature;
+      state.dailyReconcile.preview = preview;
+      state.dailyReconcile.error = "";
+      renderTabContent();
+    } catch (error) {
+      state.dailyReconcile.preview = null;
+      state.dailyReconcile.files = {};
+      state.dailyReconcile.signature = "";
+      state.dailyReconcile.error = `只读校验失败：${parseErrorMessage(error)}`;
+      renderTabContent();
+    } finally {
+      state.dailyReconcile.busy = false;
+      if (button?.isConnected) {
+        button.disabled = false;
+        button.textContent = "只读校验";
+      }
+    }
+  }
+
+  async function handleConfirmDailyReconcile() {
+    const daily = state.dailyReconcile;
+    const confirmed = $("confirmDailyDelete")?.checked;
+    const button = $("confirmDailyReconcile");
+    const files = collectDailyReconcileFiles(true);
+
+    try {
+      if (!daily.preview || !daily.signature) throw new Error("请先完成只读校验，再确认导入。");
+      ensureDailyFiles(files);
+      const signature = dailyFilesSignature(files);
+      if (signature !== daily.signature) throw new Error("当前文件与只读校验时不一致，请重新执行只读校验。");
+      if (!confirmed) throw new Error("请先勾选“我确认删除以上旧单及对应人工维护字段”。");
+
+      daily.busy = true;
+      daily.error = "";
+      daily.result = null;
+      daily.summary = "";
+      if (button) {
+        button.disabled = true;
+        button.textContent = "导入中...";
+      }
+
+      const importedBy = currentEditorName();
+      const result = await storage().runDailyFullReconcile({ files, importedBy, previewSignature: daily.signature });
+      daily.result = result;
+      daily.error = result.status === "partial" ? "每日全量对账部分成功/部分失败，请查看正式导入结果。" : "";
+
+      const [rawTickets, importLogs] = await Promise.all([loadBaseTickets(), loadImportLogs()]);
+      state.rawTickets = rawTickets;
+      state.importLogs = importLogs;
+      state.dataDate = getMaxTicketDate(rawTickets);
+      await loadSharedData();
+      state.tickets = state.rawTickets.map((row) => normalizeRecord(row, state.dataDate));
+      state.projects = state.rawProjects.map(normalizeProject);
+      daily.summary = buildDailySummary(result);
+      render();
+    } catch (error) {
+      daily.result = null;
+      daily.error = `确认导入失败：${parseErrorMessage(error)}`;
+      renderTabContent();
+    } finally {
+      daily.busy = false;
+      if (button?.isConnected) {
+        button.disabled = false;
+        button.textContent = "确认导入";
+      }
+    }
+  }
+
+  function collectDailyReconcileFiles(allowStateFallback) {
+    const files = {};
+    IMPORT_TICKET_TYPES.forEach((type) => {
+      const inputFile = $(dailyFileInputId(type))?.files?.[0];
+      files[type] = inputFile || (allowStateFallback ? state.dailyReconcile.files?.[type] : null);
+    });
+    return files;
+  }
+
+  function ensureDailyFiles(files) {
+    const missing = IMPORT_TICKET_TYPES.filter((type) => !files[type]);
+    if (missing.length) throw new Error(`请上传四类工单全量表，缺少：${missing.join("、")}`);
+  }
+
+  function dailyFilesSignature(files) {
+    return IMPORT_TICKET_TYPES
+      .map((type) => {
+        const file = files[type];
+        return `${type}:${file?.name || ""}:${file?.size || 0}:${file?.lastModified || 0}`;
+      })
+      .join("|");
+  }
+
+  function dailyFileInputId(type) {
+    return `dailyFile_${type}`;
+  }
+
+  function dailyStatusLabel(status) {
+    if (status === "success") return "全部成功";
+    if (status === "partial") return "部分成功/部分失败";
+    if (status === "failed") return "全部失败";
+    return status || "-";
+  }
+
+  function buildDailySummary(result) {
+    const activeRows = getActiveRecords(state.tickets);
+    const byType = Object.fromEntries(IMPORT_TICKET_TYPES.map((type) => [type, activeRows.filter((row) => row["工单类型"] === type)]));
+    const allRisk = {
+      high: riskRows(activeRows, "高风险"),
+      medium: riskRows(activeRows, "中风险"),
+      watch: riskRows(activeRows, "关注/待观察"),
+      low: riskRows(activeRows, "低风险"),
+    };
+    const blockedRows = blockedTicketRows(activeRows);
+    const totals = result?.totals || {};
+    const typeLines = IMPORT_TICKET_TYPES.map((type) => {
+      const rows = byType[type] || [];
+      return `${type} ${rows.length} 单，高风险 ${riskRows(rows, "高风险").length} 单，中风险 ${riskRows(rows, "中风险").length} 单；`;
+    });
+    const topHigh = topOpenRows(allRisk.high, 5);
+    const focusRows = uniqueSummaryRows([...blockedRows, ...topHigh]).slice(0, 8);
+    const focusLines = focusRows.length
+      ? focusRows.map((row, index) => `${index + 1}. 客诉单号：${row["工单号"]}，${row["工单类型"]}，已流转 ${row["已流转天数"] || 0} 天，当前卡点：${row["当前卡点"] || "暂无"}，下一步：${row["下一步规划"] || "暂无"}`).join("\n")
+      : "暂无需重点跟进工单。";
+    const topHighLines = topHigh.length
+      ? topHigh.map((row, index) => `${index + 1}. ${row["工单类型"]} ${row["工单号"]}，制单人：${row["制单人/创建人"] || "未指定"}，已流转 ${row["已流转天数"] || 0} 天`).join("\n")
+      : "暂无高风险工单。";
+
+    return [
+      "今日工单更新完成：",
+      "",
+      `数据日期：${state.dataDate || formatDate(new Date())}`,
+      `总工单数：${activeRows.length}`,
+      ...typeLines,
+      "",
+      `高风险：${allRisk.high.length} 单；中风险：${allRisk.medium.length} 单；关注/待观察：${allRisk.watch.length} 单；低风险：${allRisk.low.length} 单。`,
+      `当前有卡点工单：${blockedRows.length} 单。`,
+      "",
+      `今日新增 ${totals.insertedCount || 0} 单，更新 ${totals.updatedCount || 0} 单，删除 ${totals.deletedCount || 0} 单。`,
+      "",
+      "各类型高风险：",
+      ...IMPORT_TICKET_TYPES.map((type) => `- ${type}：${riskRows(byType[type] || [], "高风险").length} 单`),
+      "",
+      "TOP 高风险工单：",
+      topHighLines,
+      "",
+      "需重点跟进：",
+      focusLines,
+    ].join("\n");
+  }
+
+  function uniqueSummaryRows(rows) {
+    const seen = new Set();
+    return rows.filter((row) => {
+      const key = `${row["工单类型"]}::${row["工单号"]}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }
+
+  async function copyDailySummary() {
+    const text = state.dailyReconcile.summary;
+    if (!text) return;
+    try {
+      await navigator.clipboard.writeText(text);
+      state.dailyReconcile.result = { ...(state.dailyReconcile.result || {}), message: "每日总结已复制。" };
+    } catch {
+      const textarea = document.createElement("textarea");
+      textarea.value = text;
+      document.body.appendChild(textarea);
+      textarea.select();
+      document.execCommand("copy");
+      textarea.remove();
+      state.dailyReconcile.result = { ...(state.dailyReconcile.result || {}), message: "每日总结已复制。" };
+    }
+    renderTabContent();
+  }
+
   function openDrill(kind, title) {
     openDetailDrawer(drillRows(kind), title || "工单明细");
   }
@@ -1345,6 +1747,7 @@
     if (kind === "high") return riskRows(rows, "高风险");
     if (kind === "medium") return riskRows(rows, "中风险");
     if (kind === "low") return riskRows(rows, "低风险");
+    if (kind === "createTimeout") return createTimeoutRows(rows);
     if (kind === "blocked") return rows.filter(hasBlocked);
     if (kind === "top") return topOpenRows(rows, 10);
     return rows;
@@ -1358,23 +1761,19 @@
           <thead>
             <tr>
               <th>工单类型</th>
-              <th>工单号</th>
+              <th>客诉单号</th>
               <th>制单人/创建人</th>
               <th>制单时间</th>
               <th>已流转天数</th>
               <th>单据状态</th>
               <th>工单状态</th>
               <th>区域</th>
-              <th>客户/联系人</th>
-              <th>物料代码</th>
-              <th>物料描述</th>
               <th>问题简述</th>
-              <th>有卡点</th>
+              <th>是否有卡点</th>
               <th>未结案原因</th>
               <th>当前卡点</th>
               <th>下一步规划</th>
               <th>预计闭环时间</th>
-              <th>最新进展</th>
             </tr>
           </thead>
           <tbody>
@@ -1388,16 +1787,12 @@
                 <td>${esc(row["单据状态"] || "-")}</td>
                 <td>${esc(row["工单状态"] || "-")}</td>
                 <td>${esc(row["区域"] || "-")}</td>
-                <td>${esc(row["客户/联系人"] || "-")}</td>
-                <td>${esc(row["物料代码"] || "-")}</td>
-                <td>${esc(row["物料描述"] || "-")}</td>
                 <td>${clip(row["问题简述"])}</td>
                 <td>${ticketBlockCheckbox(row)}</td>
                 <td>${ticketTextarea(row, "未结案原因")}</td>
                 <td>${ticketTextarea(row, "当前卡点")}</td>
                 <td>${ticketTextarea(row, "下一步规划")}</td>
-                <td>${ticketDateEditor(row, "预计闭环时间")}</td>
-                <td>${ticketTextarea(row, "最新进展")}<span class="save-status" data-save-status data-ticket-id="${escAttr(row["工单号"])}"></span></td>
+                <td>${ticketDateEditor(row, "预计闭环时间")}<span class="save-status" data-save-status data-ticket-id="${escAttr(row["工单号"])}"></span></td>
               </tr>
             `).join("")}
           </tbody>
@@ -1438,12 +1833,16 @@
     });
   }
 
-  function ticketTextarea(row, field) {
-    return `<textarea data-ticket-id="${escAttr(row["工单号"])}" data-ticket-type="${escAttr(row["工单类型"])}" data-ticket-field="${escAttr(field)}" placeholder="${escAttr(field)}">${esc(row[field] || "")}</textarea>`;
+  function ticketTextarea(row, field, options = {}) {
+    const disabled = options.disabled ? "disabled" : "";
+    const className = options.disabled ? " class=\"field-disabled\"" : "";
+    return `<textarea${className} data-ticket-id="${escAttr(row["工单号"])}" data-ticket-type="${escAttr(row["工单类型"])}" data-ticket-field="${escAttr(field)}" placeholder="${escAttr(field)}" ${disabled}>${esc(row[field] || "")}</textarea>`;
   }
 
-  function ticketDateEditor(row, field) {
-    return `<input type="date" data-ticket-id="${escAttr(row["工单号"])}" data-ticket-type="${escAttr(row["工单类型"])}" data-ticket-field="${escAttr(field)}" value="${escAttr(dateOnly(row[field]))}" />`;
+  function ticketDateEditor(row, field, options = {}) {
+    const disabled = options.disabled ? "disabled" : "";
+    const className = options.disabled ? " class=\"field-disabled\"" : "";
+    return `<input${className} type="date" data-ticket-id="${escAttr(row["工单号"])}" data-ticket-type="${escAttr(row["工单类型"])}" data-ticket-field="${escAttr(field)}" value="${escAttr(dateOnly(row[field]))}" ${disabled} />`;
   }
 
   function ticketBlockCheckbox(row) {
@@ -1451,7 +1850,7 @@
     return `
       <label class="check-cell">
         <input type="checkbox" data-ticket-id="${escAttr(row["工单号"])}" data-ticket-type="${escAttr(row["工单类型"])}" data-ticket-field="有卡点" value="是" ${checked} />
-        <span>${checked ? "有卡点" : "无卡点"}</span>
+        <span>${checked ? "是" : "否"}</span>
       </label>
     `;
   }
@@ -1698,11 +2097,29 @@
   }
 
   function calculateRiskLevel(record) {
+    if (isCreateTimeoutTicket(record)) return "制单待处理";
+    if (isCreateDocument(record)) return "低风险";
     const days = getTicketAgeDays(record, state.dataDate);
     if (days > 10) return "高风险";
     if (days > 6) return "中风险";
-    if (days <= 4) return "低风险";
-    return "关注/待观察";
+    return "低风险";
+  }
+
+  function isCreateDocument(record) {
+    return clean(record["单据状态"]) === "制单";
+  }
+
+  function isCreateTimeoutTicket(record) {
+    return isCreateDocument(record) && getCreateAgeDays(record) > 2;
+  }
+
+  function createTimeoutRows(records) {
+    return uniqueRows((records || []).filter(isCreateTimeoutTicket))
+      .sort((a, b) => getCreateAgeDays(b) - getCreateAgeDays(a));
+  }
+
+  function getCreateAgeDays(record) {
+    return diffDays(formatDate(new Date()), clean(record["制单时间"] || record["创建时间"]));
   }
 
   function getTicketAgeDays(record, dataDate = state.dataDate) {
@@ -1726,6 +2143,7 @@
       supply: records.filter((row) => row["工单类型"] === "供应工单").length,
       high: riskRows(records, "高风险").length,
       medium: riskRows(records, "中风险").length,
+      createTimeout: createTimeoutRows(records).length,
       blocked: records.filter(hasBlocked).length,
     };
   }
@@ -1783,8 +2201,7 @@
   }
 
   function hasBlocked(row) {
-    if (isBlockerFlagged(row)) return true;
-    return BLOCK_FIELDS.some((field) => clean(row[field]) !== "");
+    return isBlockerFlagged(row);
   }
 
   function isBlockerFlagged(row) {
@@ -1793,7 +2210,7 @@
   }
 
   function isBlockerTracked(row) {
-    return isBlockerFlagged(row) || clean(row["当前卡点"]) !== "";
+    return isBlockerFlagged(row);
   }
 
   function blockedTicketRows(records) {
@@ -1810,6 +2227,7 @@
     if (risk === "高风险") return `<span class="badge risk-high">高风险</span>`;
     if (risk === "中风险") return `<span class="badge risk-medium">中风险</span>`;
     if (risk === "低风险") return `<span class="badge risk-low">低风险</span>`;
+    if (risk === "制单待处理") return `<span class="badge risk-pending">制单待处理</span>`;
     if (risk === "关注/待观察") return `<span class="badge risk-watch">关注/待观察</span>`;
     return `<span class="badge risk-closed">${esc(risk || "已完结")}</span>`;
   }
@@ -1932,7 +2350,14 @@
   }
 
   function importModeLabel(value) {
-    return clean(value) === "incremental" ? "增量导入/更新" : "全量刷新当前类型";
+    if (clean(value) === "daily_full_reconcile") return "每日四类全量对账";
+    return clean(value) === "incremental" ? "增量导入/更新" : "全量对账当前类型";
+  }
+
+  function shortBatchId(value) {
+    const text = clean(value);
+    if (!text) return "-";
+    return text.length > 14 ? `${text.slice(0, 8)}...` : text;
   }
 
   function parseErrorMessage(error) {
